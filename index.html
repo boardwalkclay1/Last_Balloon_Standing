@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Last Balloon Standing</title>
+
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- QR generator -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+</head>
+
+<body>
+  <div id="app"></div>
+
+  <!-- Core engines -->
+  <script src="state.js"></script>
+  <script src="ui.js"></script>
+  <script src="net.js"></script>
+  <script src="app.js"></script>
+
+  <script>
+    // AUTO‑BOOT LOGIC
+    // -----------------------------------------------------
+    // 1. Detect if this device is host or player
+    // 2. Start automatic wireless discovery
+    // 3. Generate QR fallback
+    // 4. Render UI
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const mode = urlParams.get("mode"); // host | join
+
+    let asHost = false;
+
+    if (mode === "host") {
+      asHost = true;
+    } else if (mode === "join") {
+      asHost = false;
+    } else {
+      // Default screen: choose host or join
+      document.getElementById("app").innerHTML = `
+        <div class="choose-mode">
+          <h1>Last Balloon Standing</h1>
+          <button onclick="window.location='?mode=host'">Create Game</button>
+          <button onclick="window.location='?mode=join'">Join Game</button>
+        </div>
+      `;
+      throw new Error("Waiting for mode selection");
+    }
+
+    // Initialize networking (Bluetooth + WebRTC + QR)
+    initNetwork({
+      asHost,
+      onStateReceived: (remoteState) => {
+        gameState = remoteState;
+        render();
+      },
+      onQRReady: (joinString) => {
+        // Render QR code for fallback join
+        const qr = new QRious({
+          element: document.createElement("canvas"),
+          value: joinString,
+          size: 220
+        });
+
+        const qrContainer = document.createElement("div");
+        qrContainer.className = "qr-container";
+        qrContainer.innerHTML = `
+          <h3>Scan to Join</h3>
+        `;
+        qrContainer.appendChild(qr.element);
+
+        document.body.appendChild(qrContainer);
+      }
+    });
+
+    // Initial render
+    render();
+  </script>
+</body>
+</html>
