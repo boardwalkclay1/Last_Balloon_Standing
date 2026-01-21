@@ -3,13 +3,111 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Balloon Game</title>
-  <link rel="stylesheet" href="styles.css" />
+  <title>Balloon Dating Game</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #050509;
+      color: #f5f5f5;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+    #app {
+      width: 100%;
+      max-width: 480px;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+    .card {
+      background: #111119;
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.6);
+    }
+    h1, h2, h3 {
+      margin-top: 0;
+      text-align: center;
+    }
+    button {
+      display: block;
+      width: 100%;
+      padding: 12px 16px;
+      margin: 8px 0;
+      border-radius: 999px;
+      border: none;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      background: #ff1744;
+      color: #fff;
+      transition: background 0.15s ease, transform 0.1s ease;
+    }
+    button.secondary {
+      background: #272737;
+    }
+    button:active {
+      transform: scale(0.97);
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+    .center-text {
+      text-align: center;
+    }
+    .input {
+      width: 100%;
+      padding: 10px 12px;
+      margin: 8px 0 16px;
+      border-radius: 999px;
+      border: 1px solid #333344;
+      background: #050509;
+      color: #f5f5f5;
+      box-sizing: border-box;
+    }
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 12px 0;
+    }
+    li {
+      padding: 6px 0;
+      border-bottom: 1px solid #222233;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 14px;
+    }
+    .badge {
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      background: #272737;
+      color: #f5f5f5;
+    }
+    .balloon-intact {
+      color: #4caf50;
+      font-weight: 600;
+    }
+    .balloon-popped {
+      color: #ff1744;
+      font-weight: 600;
+    }
+    .small {
+      font-size: 12px;
+      opacity: 0.7;
+    }
+  </style>
 </head>
-
 <body>
   <div id="app"></div>
 
+  <script src="ble-bridge.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
