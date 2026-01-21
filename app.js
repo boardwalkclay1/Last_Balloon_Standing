@@ -1,25 +1,24 @@
-// app.js — collision‑proof version
+// app.js — full Balloon Dating Game, collision‑proof, single load safe
 
 (function () {
+  // Prevent double‑loading from ever breaking anything
   if (window.BalloonGame) {
     console.warn("BalloonGame already loaded — skipping duplicate load.");
     return;
   }
 
-  window.BalloonGame = {};
-
-  const BG = window.BalloonGame;
+  const BG = (window.BalloonGame = {});
 
   // ---------- GAME MODEL ----------
 
   BG.GamePhases = {
-    MODE_SELECT: 'MODE_SELECT',
-    NAME_ENTRY: 'NAME_ENTRY',
-    LOBBY: 'LOBBY',
-    ROUND1: 'ROUND1',
-    ROUND2: 'ROUND2',
-    ROUND3: 'ROUND3',
-    RESULTS: 'RESULTS',
+    MODE_SELECT: "MODE_SELECT",
+    NAME_ENTRY: "NAME_ENTRY",
+    LOBBY: "LOBBY",
+    ROUND1: "ROUND1",
+    ROUND2: "ROUND2",
+    ROUND3: "ROUND3",
+    RESULTS: "RESULTS",
   };
 
   BG.state = {
@@ -27,10 +26,10 @@
     phase: BG.GamePhases.MODE_SELECT,
     hostId: null,
     spotlightId: null,
-    players: [],
-    questions: [],
-    answers: [],
-    match: null,
+    players: [],   // { id, name, role, balloonStatus, popReason }
+    questions: [], // { id, fromPlayerId, text, orderIndex }
+    answers: [],   // { id, questionId, fromPlayerId, text }
+    match: null,   // { spotlightId, balloonId } | null
   };
 
   BG.localPlayerId = null;
@@ -39,17 +38,18 @@
   // ---------- BLE BRIDGE ----------
 
   BG.broadcast = function (json) {
-    if (window.BLEBridge && window.BLEBridge.broadcastState) {
+    if (window.BLEBridge && typeof window.BLEBridge.broadcastState === "function") {
       window.BLEBridge.broadcastState(json);
     }
   };
 
   BG.sendAction = function (json) {
-    if (window.BLEBridge && window.BLEBridge.sendAction) {
+    if (window.BLEBridge && typeof window.BLEBridge.sendAction === "function") {
       window.BLEBridge.sendAction(json);
     }
   };
 
+  // Called on clients when host broadcasts state
   window.onBleStateReceived = function (jsonString) {
     try {
       BG.state = JSON.parse(jsonString);
@@ -59,6 +59,7 @@
     }
   };
 
+  // Called on host when a client sends an action
   window.onBleActionReceived = function (jsonString) {
     try {
       const action = JSON.parse(jsonString);
@@ -70,7 +71,7 @@
     }
   };
 
-  // ---------- RENDERING ----------
+  // ---------- RENDER ROOT ----------
 
   BG.render = function () {
     const root = document.getElementById("app");
@@ -102,6 +103,8 @@
       case BG.GamePhases.RESULTS:
         BG.renderResults(card);
         break;
+      default:
+        card.innerHTML = "<p>Unknown phase.</p>";
     }
 
     root.appendChild(card);
@@ -122,15 +125,23 @@
       BG.localPlayerId = crypto.randomUUID();
       BG.state.gameId = crypto.randomUUID();
       BG.state.hostId = BG.localPlayerId;
-      BG.state.players = [{
-        id: BG.localPlayerId,
-        name: "Host",
-        role: "host",
-        balloonStatus: "intact",
-        popReason: null,
-      }];
+      BG.state.players = [
+        {
+          id: BG.localPlayerId,
+          name: "Host",
+          role: "host",
+          balloonStatus: "intact",
+          popReason: null,
+        },
+      ];
+      BG.state.questions = [];
+      BG.state.answers = [];
+      BG.state.match = null;
+      BG.state.spotlightId = null;
       BG.state.phase = BG.GamePhases.NAME_ENTRY;
-      if (window.BLEBridge?.startHost) window.BLEBridge.startHost();
+      if (window.BLEBridge && typeof window.BLEBridge.startHost === "function") {
+        window.BLEBridge.startHost();
+      }
       BG.render();
     };
 
@@ -141,7 +152,9 @@
       BG.isHost = false;
       BG.localPlayerId = crypto.randomUUID();
       BG.state.phase = BG.GamePhases.NAME_ENTRY;
-      if (window.BLEBridge?.startClient) window.BLEBridge.startClient();
+      if (window.BLEBridge && typeof window.BLEBridge.startClient === "function") {
+        window.BLEBridge.startClient();
+      }
       BG.render();
     };
 
@@ -158,6 +171,7 @@
     `;
 
     const input = document.createElement("input");
+    input.type = "text";
     input.className = "input";
     input.placeholder = "Your name";
 
@@ -173,11 +187,13 @@
         BG.broadcast(JSON.stringify(BG.state));
         BG.render();
       } else {
-        BG.sendAction(JSON.stringify({
-          type: "JOIN",
-          playerId: BG.localPlayerId,
-          name,
-        }));
+        BG.sendAction(
+          JSON.stringify({
+            type: "JOIN",
+            playerId: BG.localPlayerId,
+            name,
+          })
+        );
       }
     };
 
@@ -188,21 +204,23 @@
   // ---------- LOBBY ----------
 
   BG.renderLobby = function (container) {
-    const me = BG.state.players.find(p => p.id === BG.localPlayerId);
+    const me = BG.state.players.find((p) => p.id === BG.localPlayerId);
 
     container.innerHTML = `
       <h2>Lobby</h2>
       <p class="small center-text">Waiting for players…</p>
-      <p><strong>You:</strong> ${me?.name}</p>
+      <p><strong>You:</strong> ${me ? me.name : "Unknown"}</p>
     `;
 
     const list = document.createElement("ul");
-    BG.state.players.forEach(p => {
+    BG.state.players.forEach((p) => {
       const li = document.createElement("li");
       const role =
-        p.id === BG.state.hostId ? "Host" :
-        p.id === BG.state.spotlightId ? "Spotlight" :
-        "Balloon";
+        p.id === BG.state.hostId
+          ? "Host"
+          : p.id === BG.state.spotlightId
+          ? "Spotlight"
+          : "Balloon";
 
       li.innerHTML = `
         <span>${p.name}</span>
@@ -215,20 +233,39 @@
     if (BG.isHost) {
       const setSpot = document.createElement("button");
       setSpot.textContent = "Set Spotlight";
+      setSpot.className = "secondary";
       setSpot.onclick = () => {
-        const idFrag = prompt("Enter ID fragment:");
-        const match = BG.state.players.find(p => p.id.startsWith(idFrag));
-        if (match) {
-          BG.state.spotlightId = match.id;
-          BG.broadcast(JSON.stringify(BG.state));
-          BG.render();
+        const names = BG.state.players
+          .map((p) => `${p.name} (${p.id.slice(0, 4)})`)
+          .join("\n");
+        const frag = prompt(`Enter ID fragment of spotlight:\n${names}`);
+        if (!frag) return;
+        const match = BG.state.players.find((p) => p.id.startsWith(frag));
+        if (!match) {
+          alert("No player with that ID fragment.");
+          return;
         }
+        BG.state.spotlightId = match.id;
+        BG.broadcast(JSON.stringify(BG.state));
+        BG.render();
       };
 
       const startBtn = document.createElement("button");
       startBtn.textContent = "Start Round 1";
       startBtn.onclick = () => {
-        if (!BG.state.spotlightId) return alert("Pick spotlight first");
+        if (!BG.state.spotlightId) {
+          alert("Set a spotlight player first.");
+          return;
+        }
+        BG.state.questions = [];
+        BG.state.answers = [];
+        BG.state.match = null;
+        BG.state.players.forEach((p) => {
+          if (p.id !== BG.state.spotlightId) {
+            p.balloonStatus = "intact";
+            p.popReason = null;
+          }
+        });
         BG.state.phase = BG.GamePhases.ROUND1;
         BG.broadcast(JSON.stringify(BG.state));
         BG.render();
@@ -239,147 +276,197 @@
     }
   };
 
-  // ---------- ROUND 1 ----------
+  // ---------- ROUND 1 (LOOKS) ----------
 
   BG.renderRound1 = function (container) {
-    const me = BG.state.players.find(p => p.id === BG.localPlayerId);
-    const spotlight = BG.state.players.find(p => p.id === BG.state.spotlightId);
+    const me = BG.state.players.find((p) => p.id === BG.localPlayerId);
+    const spotlight = BG.state.players.find((p) => p.id === BG.state.spotlightId);
+
+    if (!me || !spotlight) {
+      container.innerHTML = "<p>Error: missing player or spotlight.</p>";
+      return;
+    }
 
     if (me.id === spotlight.id) {
       container.innerHTML = `
         <h2>Round 1: Looks</h2>
-        <p class="small center-text">You are the Spotlight.</p>
+        <p class="center-text small">You are the Spotlight.</p>
       `;
 
       const list = document.createElement("ul");
       BG.state.players
-        .filter(p => p.id !== spotlight.id)
-        .forEach(p => {
+        .filter((p) => p.id !== spotlight.id)
+        .forEach((p) => {
           const li = document.createElement("li");
+          const statusClass =
+            p.balloonStatus === "popped" ? "balloon-popped" : "balloon-intact";
+          const statusText =
+            p.balloonStatus === "popped" ? "Popped" : "Intact";
           li.innerHTML = `
             <span>${p.name}</span>
-            <span class="${p.balloonStatus === "popped" ? "balloon-popped" : "balloon-intact"}">
-              ${p.balloonStatus}
-            </span>
+            <span class="${statusClass}">${statusText}</span>
           `;
           list.appendChild(li);
         });
       container.appendChild(list);
 
       if (BG.isHost) {
-        const btn = document.createElement("button");
-        btn.textContent = "Continue to Questions";
-        btn.onclick = () => {
+        const allDecided = BG.state.players
+          .filter((p) => p.id !== spotlight.id)
+          .every(
+            (p) =>
+              p.balloonStatus === "popped" || p.balloonStatus === "intact"
+          );
+
+        const finishBtn = document.createElement("button");
+        finishBtn.textContent = "Continue to Questions";
+        finishBtn.disabled = !allDecided;
+        finishBtn.onclick = () => {
           BG.state.phase = BG.GamePhases.ROUND2;
           BG.broadcast(JSON.stringify(BG.state));
           BG.render();
         };
-        container.appendChild(btn);
+        container.appendChild(finishBtn);
       }
     } else {
+      const status = me.balloonStatus || "intact";
       container.innerHTML = `
         <h2>Round 1: Looks</h2>
-        <p class="small center-text">Spotlight: ${spotlight.name}</p>
+        <p class="center-text small">Spotlight: ${spotlight.name}</p>
+        <p class="center-text">Your balloon is: 
+          <span class="${
+            status === "popped" ? "balloon-popped" : "balloon-intact"
+          }">
+            ${status === "popped" ? "Popped" : "Intact"}
+          </span>
+        </p>
       `;
 
-      if (me.balloonStatus !== "popped") {
-        const keep = document.createElement("button");
-        keep.textContent = "Keep Balloon";
-        keep.onclick = () => {
-          BG.sendAction(JSON.stringify({
-            type: "KEEP",
-            playerId: BG.localPlayerId,
-          }));
+      if (status !== "popped") {
+        const keepBtn = document.createElement("button");
+        keepBtn.textContent = "Keep Balloon";
+        keepBtn.onclick = () => {
+          BG.sendAction(
+            JSON.stringify({
+              type: "KEEP",
+              playerId: BG.localPlayerId,
+            })
+          );
         };
 
-        const pop = document.createElement("button");
-        pop.textContent = "Pop Balloon";
-        pop.onclick = () => {
-          BG.sendAction(JSON.stringify({
-            type: "POP",
-            playerId: BG.localPlayerId,
-            reason: "looks",
-          }));
+        const popBtn = document.createElement("button");
+        popBtn.textContent = "Pop Balloon";
+        popBtn.onclick = () => {
+          BG.sendAction(
+            JSON.stringify({
+              type: "POP",
+              playerId: BG.localPlayerId,
+              reason: "looks",
+            })
+          );
         };
 
-        container.appendChild(keep);
-        container.appendChild(pop);
+        container.appendChild(keepBtn);
+        container.appendChild(popBtn);
       }
     }
   };
 
-  // ---------- ROUND 2 ----------
+  // ---------- ROUND 2 (QUESTIONS + ANSWERS) ----------
 
   BG.renderRound2 = function (container) {
-    const me = BG.state.players.find(p => p.id === BG.localPlayerId);
-    const spotlight = BG.state.players.find(p => p.id === BG.state.spotlightId);
+    const me = BG.state.players.find((p) => p.id === BG.localPlayerId);
+    const spotlight = BG.state.players.find((p) => p.id === BG.state.spotlightId);
+    if (!me || !spotlight) {
+      container.innerHTML = "<p>Error: missing player or spotlight.</p>";
+      return;
+    }
 
     const remaining = BG.state.players.filter(
-      p => p.id !== spotlight.id && p.balloonStatus !== "popped"
+      (p) => p.id !== spotlight.id && p.balloonStatus !== "popped"
     );
+
+    if (remaining.length === 0) {
+      if (BG.isHost) {
+        BG.state.phase = BG.GamePhases.RESULTS;
+        BG.broadcast(JSON.stringify(BG.state));
+        BG.render();
+      } else {
+        container.innerHTML = "<p>No balloons left. Waiting for host.</p>";
+      }
+      return;
+    }
 
     if (me.id === spotlight.id) {
       container.innerHTML = `
         <h2>Round 2: Questions</h2>
-        <p class="small center-text">Answer each balloon's question.</p>
+        <p class="center-text small">Answer one question from each remaining balloon.</p>
       `;
 
-      const blocks = remaining.map(b => {
-        const q = BG.state.questions.find(q => q.fromPlayerId === b.id);
+      const blocks = remaining.map((b) => {
+        const q = BG.state.questions.find((q) => q.fromPlayerId === b.id);
         return { balloon: b, question: q };
       });
 
-      const allSubmitted = blocks.every(b => b.question);
+      const allSubmitted = blocks.every((b) => b.question);
 
       if (!allSubmitted) {
-        container.innerHTML += `<p class="small center-text">Waiting for all questions…</p>`;
+        const p = document.createElement("p");
+        p.className = "center-text small";
+        p.textContent = "Waiting for all balloons to submit their questions…";
+        container.appendChild(p);
         return;
       }
 
-      blocks.forEach(b => {
-        const wrap = document.createElement("div");
-        wrap.style.marginBottom = "16px";
+      blocks
+        .sort((a, b) => a.question.orderIndex - b.question.orderIndex)
+        .forEach((b) => {
+          const wrap = document.createElement("div");
+          wrap.style.marginBottom = "16px";
 
-        const existing = BG.state.answers.find(a => a.questionId === b.question.id);
+          const existing = BG.state.answers.find(
+            (a) => a.questionId === b.question.id
+          );
 
-        wrap.innerHTML = `
-          <p><strong>${b.balloon.name} asks:</strong> ${b.question.text}</p>
-        `;
+          wrap.innerHTML = `
+            <p><strong>${b.balloon.name} asks:</strong> ${b.question.text}</p>
+          `;
 
-        const input = document.createElement("input");
-        input.className = "input";
-        input.value = existing?.text || "";
+          const input = document.createElement("input");
+          input.type = "text";
+          input.className = "input";
+          input.placeholder = "Your answer";
+          input.value = existing ? existing.text : "";
 
-        const save = document.createElement("button");
-        save.textContent = existing ? "Update Answer" : "Save Answer";
-        save.onclick = () => {
-          const text = input.value.trim();
-          if (!text) return;
-          const action = {
-            type: "ANSWER",
-            questionId: b.question.id,
-            fromPlayerId: me.id,
-            text,
+          const save = document.createElement("button");
+          save.textContent = existing ? "Update Answer" : "Save Answer";
+          save.onclick = () => {
+            const text = input.value.trim();
+            if (!text) return;
+            const action = {
+              type: "ANSWER",
+              questionId: b.question.id,
+              fromPlayerId: me.id,
+              text,
+            };
+            if (BG.isHost) {
+              BG.applyAction(action);
+              BG.broadcast(JSON.stringify(BG.state));
+              BG.render();
+            } else {
+              BG.sendAction(JSON.stringify(action));
+            }
           };
-          if (BG.isHost) {
-            BG.applyAction(action);
-            BG.broadcast(JSON.stringify(BG.state));
-            BG.render();
-          } else {
-            BG.sendAction(JSON.stringify(action));
-          }
-        };
 
-        wrap.appendChild(input);
-        wrap.appendChild(save);
-        container.appendChild(wrap);
-      });
+          wrap.appendChild(input);
+          wrap.appendChild(save);
+          container.appendChild(wrap);
+        });
 
       if (BG.isHost) {
-        const allAnswered = blocks.every(b =>
-          BG.state.answers.find(a => a.questionId === b.question.id)
+        const allAnswered = blocks.every((b) =>
+          BG.state.answers.find((a) => a.questionId === b.question.id)
         );
-
         const next = document.createElement("button");
         next.textContent = "Continue to Final Choice";
         next.disabled = !allAnswered;
@@ -393,77 +480,119 @@
     } else {
       container.innerHTML = `
         <h2>Round 2: Questions</h2>
-        <p class="small center-text">Spotlight: ${spotlight.name}</p>
+        <p class="center-text small">Spotlight: ${spotlight.name}</p>
       `;
 
-      const myQ = BG.state.questions.find(q => q.fromPlayerId === me.id);
-      const myA = myQ ? BG.state.answers.find(a => a.questionId === myQ.id) : null;
+      const myQ = BG.state.questions.find((q) => q.fromPlayerId === me.id);
+      const myA = myQ
+        ? BG.state.answers.find((a) => a.questionId === myQ.id)
+        : null;
 
-      if (!myQ && me.balloonStatus !== "popped") {
-        const input = document.createElement("input");
-        input.className = "input";
-        input.placeholder = "Your question";
-
-        const btn = document.createElement("button");
-        btn.textContent = "Submit Question";
-        btn.onclick = () => {
-          const text = input.value.trim();
-          if (!text) return;
-          BG.sendAction(JSON.stringify({
-            type: "QUESTION",
-            id: crypto.randomUUID(),
-            fromPlayerId: me.id,
-            text,
-          }));
-        };
-
-        container.appendChild(input);
-        container.appendChild(btn);
-      }
-
-      if (myQ) {
-        container.innerHTML += `<p class="small"><strong>Your question:</strong> ${myQ.text}</p>`;
-      }
-
-      if (myA) {
-        container.innerHTML += `<p class="small"><strong>Answer:</strong> ${myA.text}</p>`;
+      if (me.balloonStatus === "popped") {
+        const p = document.createElement("p");
+        p.className = "center-text small";
+        p.textContent =
+          "You popped. You can still watch, but you are out of the running.";
+        container.appendChild(p);
       } else {
-        container.innerHTML += `<p class="small">Waiting for answer…</p>`;
-      }
+        if (!myQ) {
+          const p = document.createElement("p");
+          p.className = "small";
+          p.textContent = "Submit one question for the Spotlight.";
+          container.appendChild(p);
 
-      if (me.balloonStatus !== "popped") {
-        const pop = document.createElement("button");
-        pop.textContent = "Pop Balloon";
-        pop.onclick = () => {
-          BG.sendAction(JSON.stringify({
-            type: "POP",
-            playerId: BG.localPlayerId,
-            reason: "answer",
-          }));
-        };
-        container.appendChild(pop);
+          const input = document.createElement("input");
+          input.type = "text";
+          input.className = "input";
+          input.placeholder = "Your question";
+
+          const btn = document.createElement("button");
+          btn.textContent = "Submit Question";
+          btn.onclick = () => {
+            const text = input.value.trim();
+            if (!text) return;
+            BG.sendAction(
+              JSON.stringify({
+                type: "QUESTION",
+                id: crypto.randomUUID(),
+                fromPlayerId: me.id,
+                text,
+              })
+            );
+          };
+
+          container.appendChild(input);
+          container.appendChild(btn);
+        } else {
+          const p = document.createElement("p");
+          p.className = "small";
+          p.innerHTML = `<strong>Your question:</strong> ${myQ.text}`;
+          container.appendChild(p);
+        }
+
+        if (myA) {
+          const ans = document.createElement("p");
+          ans.className = "small";
+          ans.innerHTML = `<strong>Answer:</strong> ${myA.text}`;
+          container.appendChild(ans);
+        } else {
+          const wait = document.createElement("p");
+          wait.className = "small";
+          wait.textContent = "Waiting for Spotlight to answer…";
+          container.appendChild(wait);
+        }
+
+        if (me.balloonStatus !== "popped") {
+          const pop = document.createElement("button");
+          pop.textContent = "Pop Balloon (After Hearing Answers)";
+          pop.onclick = () => {
+            BG.sendAction(
+              JSON.stringify({
+                type: "POP",
+                playerId: BG.localPlayerId,
+                reason: "answer",
+              })
+            );
+          };
+          container.appendChild(pop);
+        }
       }
     }
   };
 
-  // ---------- ROUND 3 ----------
+  // ---------- ROUND 3 (FINAL CHOICE) ----------
 
   BG.renderRound3 = function (container) {
-    const me = BG.state.players.find(p => p.id === BG.localPlayerId);
-    const spotlight = BG.state.players.find(p => p.id === BG.state.spotlightId);
+    const me = BG.state.players.find((p) => p.id === BG.localPlayerId);
+    const spotlight = BG.state.players.find((p) => p.id === BG.state.spotlightId);
+    if (!me || !spotlight) {
+      container.innerHTML = "<p>Error: missing player or spotlight.</p>";
+      return;
+    }
 
     const remaining = BG.state.players.filter(
-      p => p.id !== spotlight.id && p.balloonStatus !== "popped"
+      (p) => p.id !== spotlight.id && p.balloonStatus !== "popped"
     );
+
+    if (remaining.length === 0) {
+      if (BG.isHost) {
+        BG.state.phase = BG.GamePhases.RESULTS;
+        BG.broadcast(JSON.stringify(BG.state));
+        BG.render();
+      } else {
+        container.innerHTML = "<p>No balloons left. Waiting for host.</p>";
+      }
+      return;
+    }
 
     if (me.id === spotlight.id) {
       container.innerHTML = `
         <h2>Round 3: Final Choice</h2>
-        <p class="small center-text">Tap one balloon to match with.</p>
+        <p class="center-text small">Tap one balloon to match with.</p>
       `;
 
       const list = document.createElement("ul");
-      remaining.forEach(p => {
+      remaining.forEach((p) => {
         const li = document.createElement("li");
         li.innerHTML = `
           <span>${p.name}</span>
@@ -490,7 +619,8 @@
     } else {
       container.innerHTML = `
         <h2>Round 3: Final Choice</h2>
-        <p class="small center-text">Waiting for Spotlight…</p>
+        <p class="center-text small">Spotlight: ${spotlight.name}</p>
+        <p class="center-text small">Waiting for Spotlight to choose…</p>
       `;
     }
   };
@@ -498,40 +628,98 @@
   // ---------- RESULTS ----------
 
   BG.renderResults = function (container) {
-    const spotlight = BG.state.players.find(p => p.id === BG.state.spotlightId);
-    const match = BG.state.match
-      ? BG.state.players.find(p => p.id === BG.state.match.balloonId)
+    const spotlight = BG.state.players.find((p) => p.id === BG.state.spotlightId);
+    const matchBalloon = BG.state.match
+      ? BG.state.players.find((p) => p.id === BG.state.match.balloonId)
       : null;
 
     container.innerHTML = `
       <h2>Results</h2>
-      <p class="small center-text">Spotlight: ${spotlight?.name}</p>
+      <p class="center-text small">Spotlight: ${
+        spotlight ? spotlight.name : "Unknown"
+      }</p>
     `;
 
     const list = document.createElement("ul");
     BG.state.players
-      .filter(p => p.id !== BG.state.spotlightId)
-      .forEach(p => {
+      .filter((p) => p.id !== BG.state.spotlightId)
+      .forEach((p) => {
+        const statusClass =
+          p.balloonStatus === "popped" ? "balloon-popped" : "balloon-intact";
+        const statusText =
+          p.balloonStatus === "popped" ? "Popped" : "Intact";
+        const reason = p.popReason ? ` (${p.popReason})` : "";
         const li = document.createElement("li");
         li.innerHTML = `
           <span>${p.name}</span>
-          <span class="${p.balloonStatus === "popped" ? "balloon-popped" : "balloon-intact"}">
-            ${p.balloonStatus}
-          </span>
+          <span class="${statusClass}">${statusText}${reason}</span>
         `;
         list.appendChild(li);
       });
     container.appendChild(list);
 
-    if (match) {
-      container.innerHTML += `
-        <p class="center-text"><strong>Match:</strong> ${spotlight.name} ❤️ ${match.name}</p>
+    if (BG.state.match && spotlight && matchBalloon) {
+      const matchBlock = document.createElement("div");
+      matchBlock.style.marginTop = "16px";
+      matchBlock.innerHTML = `
+        <p class="center-text"><strong>Match:</strong> ${spotlight.name} ❤️ ${matchBalloon.name}</p>
       `;
+      container.appendChild(matchBlock);
+
+      if (
+        BG.localPlayerId === spotlight.id ||
+        BG.localPlayerId === matchBalloon.id
+      ) {
+        const contactBlock = document.createElement("div");
+        contactBlock.style.marginTop = "16px";
+        contactBlock.innerHTML = `
+          <p class="small center-text">You two can exchange contact info now.</p>
+        `;
+
+        const phoneInput = document.createElement("input");
+        phoneInput.type = "text";
+        phoneInput.className = "input";
+        phoneInput.placeholder = "Your phone number";
+
+        const igInput = document.createElement("input");
+        igInput.type = "text";
+        igInput.className = "input";
+        igInput.placeholder = "Instagram handle";
+
+        const ttInput = document.createElement("input");
+        ttInput.type = "text";
+        ttInput.className = "input";
+        ttInput.placeholder = "TikTok handle";
+
+        const fbInput = document.createElement("input");
+        fbInput.type = "text";
+        fbInput.className = "input";
+        fbInput.placeholder = "Facebook name";
+
+        const doneBtn = document.createElement("button");
+        doneBtn.textContent = "Done";
+        doneBtn.onclick = () => {
+          alert("Share these directly with each other.");
+        };
+
+        contactBlock.appendChild(phoneInput);
+        contactBlock.appendChild(igInput);
+        contactBlock.appendChild(ttInput);
+        contactBlock.appendChild(fbInput);
+        contactBlock.appendChild(doneBtn);
+
+        container.appendChild(contactBlock);
+      }
+    } else {
+      const noMatch = document.createElement("p");
+      noMatch.className = "center-text small";
+      noMatch.textContent = "No final match was selected.";
+      container.appendChild(noMatch);
     }
 
-    const restart = document.createElement("button");
-    restart.textContent = "Back to Lobby";
-    restart.onclick = () => {
+    const restartBtn = document.createElement("button");
+    restartBtn.textContent = "Back to Lobby";
+    restartBtn.onclick = () => {
       if (BG.isHost) {
         BG.state.phase = BG.GamePhases.LOBBY;
         BG.state.questions = [];
@@ -541,15 +729,15 @@
       }
       BG.render();
     };
-    container.appendChild(restart);
+    container.appendChild(restartBtn);
   };
 
   // ---------- ACTIONS ----------
 
   BG.applyAction = function (action) {
     switch (action.type) {
-      case "JOIN":
-        if (!BG.state.players.find(p => p.id === action.playerId)) {
+      case "JOIN": {
+        if (!BG.state.players.find((p) => p.id === action.playerId)) {
           BG.state.players.push({
             id: action.playerId,
             name: action.name,
@@ -559,14 +747,79 @@
           });
         }
         break;
+      }
 
-      case "POP":
-        const p1 = BG.state.players.find(p => p.id === action.playerId);
-        if (p1) {
-          p1.balloonStatus = "popped";
-          p1.popReason = action.reason || null;
+      case "POP": {
+        const p = BG.state.players.find((p) => p.id === action.playerId);
+        if (p) {
+          p.balloonStatus = "popped";
+          p.popReason = action.reason || null;
         }
         break;
+      }
 
-      case "KEEP":
-        const p2 = BG
+      case "KEEP": {
+        const p = BG.state.players.find((p) => p.id === action.playerId);
+        if (p && p.balloonStatus !== "popped") {
+          p.balloonStatus = "intact";
+        }
+        break;
+      }
+
+      case "QUESTION": {
+        const from = BG.state.players.find(
+          (p) => p.id === action.fromPlayerId
+        );
+        if (!from || from.balloonStatus === "popped") break;
+        if (!BG.state.questions.find((q) => q.fromPlayerId === from.id)) {
+          BG.state.questions.push({
+            id: action.id,
+            fromPlayerId: from.id,
+            text: action.text,
+            orderIndex: BG.state.questions.length,
+          });
+        }
+        break;
+      }
+
+      case "ANSWER": {
+        const q = BG.state.questions.find((q) => q.id === action.questionId);
+        if (!q) break;
+        const existing = BG.state.answers.find(
+          (a) => a.questionId === q.id
+        );
+        if (existing) {
+          existing.text = action.text;
+        } else {
+          BG.state.answers.push({
+            id: crypto.randomUUID(),
+            questionId: q.id,
+            fromPlayerId: action.fromPlayerId,
+            text: action.text,
+          });
+        }
+        break;
+      }
+
+      case "FINAL_CHOICE": {
+        const spotlight = BG.state.players.find(
+          (p) => p.id === action.spotlightId
+        );
+        const balloon = BG.state.players.find(
+          (p) => p.id === action.balloonId
+        );
+        if (!spotlight || !balloon) break;
+        BG.state.match = {
+          spotlightId: spotlight.id,
+          balloonId: balloon.id,
+        };
+        BG.state.phase = BG.GamePhases.RESULTS;
+        break;
+      }
+    }
+  };
+
+  // ---------- INITIALIZE ----------
+
+  document.addEventListener("DOMContentLoaded", BG.render);
+})();
